@@ -36,7 +36,7 @@ function applyPending(){
 }
 const syncField=document.getElementById('syncPassword');
 syncField.value=syncPassword;
-function syncState(message){document.getElementById('syncStatus').textContent=message;pendingLabel();}
+function syncState(message){document.getElementById('syncStatus').textContent=message;pendingLabel();const p=document.getElementById('planSyncStatus');if(p&&/失敗|錯誤|暫停|異常/.test(message))p.textContent='⚠ '+message;}
 async function syncAPI(path,body,method='POST'){
  const r=await fetch(path,{method,cache:'no-store',headers:{Authorization:'Bearer '+syncPassword,'Content-Type':'application/json'},body:body===undefined?undefined:JSON.stringify(body)});
  const data=await r.json().catch(()=>({}));
@@ -96,7 +96,7 @@ document.getElementById('retryNotion').onclick=()=>{if(!syncReady){syncState('�
 document.getElementById('disconnectNotion').onclick=()=>{
  syncReady=false;syncPassword='';syncField.value='';sessionStorage.removeItem('greatplan-sync-password');syncState('已中斷連線；本機仍可使用');
 };
-document.addEventListener('visibilitychange',()=>{if(!document.hidden&&syncReady)syncQueue.then(async()=>{if(syncPending.length)await queueFlush();if(!syncPending.length)await syncPull()}).catch(()=>{});});
-setInterval(()=>{if(syncReady&&!document.hidden)syncQueue.then(async()=>{if(syncPending.length)await queueFlush();if(!syncPending.length)await syncPull()}).catch(e=>syncState('更新失敗：'+e.message));},60000);
+document.addEventListener('visibilitychange',()=>{if(!document.hidden&&syncReady)syncQueue.then(async()=>{if(!syncPending.length)await syncPull()}).then(()=>{if(syncPending.length)queueFlush()}).catch(()=>{});});
+setInterval(()=>{if(syncReady&&!document.hidden)syncQueue.then(async()=>{if(!syncPending.length)await syncPull()}).then(()=>{if(syncPending.length)queueFlush()}).catch(e=>syncState('更新失敗：'+e.message));},60000);
 pendingLabel();if(syncPassword){syncState('已保存本分頁的連線密碼。請點選「連線並讀取 Notion」。');}
 </script></body></html>
