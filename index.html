@@ -53,10 +53,42 @@ const syncField=document.getElementById('syncPassword');
 syncField.value=syncPassword;
 function syncState(message){document.getElementById('syncStatus').textContent=message;pendingLabel();const p=document.getElementById('planSyncStatus');if(p&&/失敗|錯誤|暫停|異常/.test(message))p.textContent='⚠ '+message;}
 async function syncAPI(path,body,method='POST'){
- const controller=new AbortController();const timeout=setTimeout(()=>controller.abort(),15000);let r;try{r=await fetch(path,{method,cache:'no-store',signal:controller.signal,headers:{Authorization:'Bearer '+syncPassword,'Content-Type':'application/json'},body:body===undefined?undefined:JSON.stringify(body)})}catch(e){throw Error(e.name==='AbortError'?'伺服器逾時，請稍後重試':('網路請求失敗：'+e.message))}finally{clearTimeout(timeout)}
- const data=await r.json().catch(()=>({error:'伺服器回傳格式無法辨識'}));
- if(!r.ok)throw Error(data.error||('HTTP '+r.status));
- return data;
+ const payload=body===undefined?undefined:JSON.stringify(body);
+ const headers={Authorization:'Bearer '+syncPassword,'Content-Type':'application/json'};
+ const ctl=new AbortController(),timer=setTimeout(()=>ctl.abort(),20000);
+ let fetchError='';
+ try{
+  const r=await fetch(path,{method,cache:'no-store',credentials:'same-origin',headers,signal:ctl.signal,body:payload});
+  const contentType=r.headers.get('content-type')||'';
+  const raw=await r.text();
+  let data;try{data=JSON.parse(raw)}catch(e){throw Error('伺服器回傳非 JSON（HTTP '+r.status+'）：'+(contentType||'unknown'))}
+  if(!r.ok)throw Error(data.error||('伺服器 HTTP '+r.status));
+  return data;
+ }catch(e){
+  if(e.name!=='AbortError'&&!(e instanceof TypeError))throw e;
+  fetchError=e.name==='AbortError'?'Fetch 逾時':('Fetch '+(e.message||e.name));
+ }finally{clearTimeout(timer)}
+ // Safari 若 fetch 在傳輸層失敗，改用原生 XMLHttpRequest。
+ syncState('原連線方式失敗，改用 Safari 備援通道…');
+ try{
+  return await new Promise((resolve,reject)=>{
+   const xhr=new XMLHttpRequest();
+   xhr.open(method,path,true);
+   xhr.timeout=20000;
+   for(const [k,v] of Object.entries(headers))xhr.setRequestHeader(k,v);
+   xhr.onload=()=>{
+    let data;try{data=JSON.parse(xhr.responseText||'{}')}catch(e){reject(Error('備援通道收到非 JSON（HTTP '+xhr.status+'）'));return;}
+    if(xhr.status<200||xhr.status>=300){reject(Error(data.error||('備援通道 HTTP '+xhr.status)));return;}
+    resolve(data);
+   };
+   xhr.onerror=()=>reject(Error('備援通道連線失敗（XHR 網路錯誤）'));
+   xhr.ontimeout=()=>reject(Error('備援通道逾時'));
+   xhr.onabort=()=>reject(Error('備援通道中斷'));
+   xhr.send(payload===undefined?null:payload);
+  });
+ }catch(e){
+  throw Error('Safari 連線失敗：'+fetchError+'；'+e.message+'。可嘗試停用 VPN／內容阻擋器或切換網路');
+ }
 }
 async function syncPull(){
  if(!location.protocol.startsWith('http'))throw Error('請使用已部署的 HTTPS 網站');
