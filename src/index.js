@@ -11,7 +11,7 @@ const n=v=>v===undefined||v===null||v===''?null:Number(v);
 async function notion(env,method,path,body){
  const r=await fetch('https://api.notion.com/v1'+path,{method,headers:{'Authorization':'Bearer '+env.NOTION_TOKEN,'Notion-Version':'2025-09-03','Content-Type':'application/json'},body:body===undefined?undefined:JSON.stringify(body)});
  const x=await r.json().catch(()=>({}));
- if(!r.ok)throw Error('Notion '+r.status+': '+(x.message||'failed'));
+ if(!r.ok){const err=new Error('Notion HTTP '+r.status+' ('+(x.code||'error')+'): '+String(x.message||'請檢查資料庫授權與欄位').slice(0,260));err.notionStatus=r.status;throw err;}
  return x;
 }
 async function list(env,id){
@@ -38,9 +38,11 @@ async function setCheck(env,b){
  const rows=await list(env,IDS.check);
  const old=rows.find(r=>dt(r.properties,'日期')===b.date&&prop(r.properties,'對象').select?.name===b.person);
  const pp={'完成':{checkbox:b.done},'更新時間':{rich_text:[{text:{content:new Date().toISOString()}}]}};
- if(old)await update(env,old.id,pp);
- else await create(env,IDS.check,{'Name':text(b.date+' '+b.person),'日期':{date:{start:b.date}},'對象':{select:{name:b.person}},'訓練類型':{select:{name:[2,4,6].includes(new Date(b.date+'T12:00:00Z').getUTCDay())?'健身房':'有氧'}},...pp});
- return {ok:true};
+ const saved=old?await update(env,old.id,pp):await create(env,IDS.check,{'Name':text(b.date+' '+b.person),'日期':{date:{start:b.date}},'對象':{select:{name:b.person}},'訓練類型':{select:{name:[2,4,6].includes(new Date(b.date+'T12:00:00Z').getUTCDay())?'健身房':'有氧'}},...pp});
+ if(!saved.id)throw Error('Notion 沒有回傳紀錄 ID');
+ const verified=await notion(env,'GET','/pages/'+saved.id);
+ if(dt(verified.properties,'日期')!==b.date||prop(verified.properties,'對象').select?.name!==b.person||prop(verified.properties,'完成').checkbox!==b.done)throw Error('Notion 寫入驗證不一致，請重試');
+ return {ok:true,verified:true,id:saved.id,date:b.date,person:b.person,done:b.done};
 }
 async function setAnchor(env,b){
  if(!validDate(b.anchor))throw Error('無效日期');
@@ -87,5 +89,5 @@ export default {async fetch(req,env){
   }
   if(req.method==='DELETE'&&path.startsWith('/api/record/'))return js(await delRecord(env,decodeURIComponent(path.slice('/api/record/'.length))));
   return js({error:'未知端點'},404);
- }catch(e){const message=String(e.message||e);return js({error:message.startsWith('Notion ')?'Notion 連線失敗；請確認金鑰與三個資料庫的授權':message},message.startsWith('Notion ')?502:400);}
+ }catch(e){const message=String(e.message||e).slice(0,320);return js({error:message},e.notionStatus?502:400);}
 }};
