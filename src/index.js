@@ -98,6 +98,9 @@ export default {async fetch(req,env,ctx){
  if(!ctx?.access||typeof ctx.access.getIdentity!=='function')return js({error:'私人網站尚未完成 Access 驗證'},403);
  let identity;try{identity=await ctx.access.getIdentity()}catch{return js({error:'Access 身分驗證失敗'},403)}
  if(!identity?.email)return js({error:'Access 身分資訊缺失'},403);
+ // Independent allowlist protects against an overly broad Cloudflare Access policy.
+ const allowed=String(env.ACCESS_ALLOWED_EMAILS||'').split(',').map(x=>x.trim().toLowerCase()).filter(Boolean);
+ if(!allowed.length||allowed.length>2||!allowed.includes(identity.email.trim().toLowerCase()))return js({error:'未授權的私人網站帳號'},403);
  const path=new URL(req.url).pathname;
  if(!path.startsWith('/api/'))return req.method==='GET'&&(path==='/'||path==='/index.html')?htmlResponse():js({error:'找不到頁面'},404);
  if(!env.NOTION_TOKEN||!env.APP_PASSWORD)return js({error:'伺服器尚未設定 Secrets'},503);

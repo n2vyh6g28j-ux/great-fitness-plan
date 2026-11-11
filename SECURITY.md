@@ -8,7 +8,7 @@ This repository should be **Private**. It is intentionally not a public website.
 - `src/index.js` imports the HTML GUI as a text module and **does not use Static Assets**. This ensures `ctx.access` is available to the Worker with Worker-level Access.
 - Cloudflare Access must be enabled for the entire Worker (production and previews) with an **Allow policy for exactly two verified email addresses**. No everyone/email-domain allow rules or bypass policies.
 - The Worker deliberately responds 403 when the platform Access identity is absent. Keep `workers.dev` and preview URLs **disabled** until Access and both user logins have been verified.
-- Notion credentials are Worker **Runtime Secrets** only: `NOTION_TOKEN` and `APP_PASSWORD`. Never commit actual values.
+- Notion credentials are Worker **Runtime Secrets** only: `NOTION_TOKEN` and `APP_PASSWORD`. Set `ACCESS_ALLOWED_EMAILS` as a third secret containing the exact one or two permitted Cloudflare Access email addresses, comma-separated. Never commit actual values.
 - This Worker enforces a second bearer password, Content Security Policy, browser security headers, request origin checks, and a 10 KB streaming JSON cap.
 
 ## Security limitations
@@ -23,7 +23,7 @@ This repository should be **Private**. It is intentionally not a public website.
 ## Checklist before re-enabling routes
 
 1. [ ] Repository changed to Private and verified.
-2. [ ] Cloudflare Zero Trust enabled.
+2. [ ] Cloudflare Zero Trust enabled and `ACCESS_ALLOWED_EMAILS` set to one or two exact verified emails.
 3. [ ] Worker-level Access policy limits entry to only the two named email addresses.
 4. [ ] Unauthenticated requests fail (403/Access login); both authorized iPhones can log in.
 5. [ ] Notion read/write and cross-device synchronization verified with test records.
