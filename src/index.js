@@ -1,6 +1,28 @@
+import STATIC_HTML from "../public/index.html";
 
 const IDS={check:'05b0f760-0236-4218-ac63-a02e148cdd51',record:'c590f3b5-d47d-42ad-a0bb-563f3e02343b',anchor:'305a10ef-26da-46d5-b603-e40dc3c16736'};
-const js=(v,status=200)=>Response.json(v,{status,headers:{'Cache-Control':'no-store','X-Content-Type-Options':'nosniff'}});
+const BASE_HEADERS={'Cache-Control':'no-store','X-Content-Type-Options':'nosniff','Referrer-Policy':'no-referrer','X-Frame-Options':'DENY','Permissions-Policy':'camera=(), microphone=(), geolocation=(), payment=()'};
+const js=(v,status=200)=>Response.json(v,{status,headers:BASE_HEADERS});
+const err=(code,message)=>Object.assign(new Error(message),{httpStatus:code});
+async function jsonBody(req,maxBytes=10000){
+ const contentType=req.headers.get('Content-Type')||'';
+ if(!/^application\/json(?:\s*;|\s*$)/i.test(contentType))throw err(415,'僅支援 application/json');
+ const length=Number(req.headers.get('Content-Length')||0);
+ if(length>maxBytes)throw err(413,'資料太大');
+ if(!req.body)throw err(400,'缺少 JSON 內容');
+ const reader=req.body.getReader(),pieces=[];let size=0;
+ while(true){const {value,done}=await reader.read();if(done)break;size+=value.byteLength;if(size>maxBytes){await reader.cancel();throw err(413,'資料太大')}pieces.push(value)}
+ const bytes=new Uint8Array(size);let offset=0;for(const p of pieces){bytes.set(p,offset);offset+=p.byteLength}
+ let parsed;try{parsed=JSON.parse(new TextDecoder().decode(bytes))}catch{throw err(400,'JSON 格式錯誤')}
+ if(!parsed||typeof parsed!=='object'||Array.isArray(parsed))throw err(400,'JSON 格式錯誤');return parsed;
+}
+function htmlResponse(){
+ const raw=crypto.getRandomValues(new Uint8Array(16));const nonce=btoa(String.fromCharCode(...raw));
+ const content=STATIC_HTML.replace(/<script(?=[\s>])/g,'<script nonce="'+nonce+'"');
+ const csp=["default-src 'none'","script-src 'nonce-"+nonce+"'","style-src 'self' 'unsafe-inline' https://fonts.googleapis.com","font-src https://fonts.gstatic.com","img-src 'self' data:","connect-src 'self'","form-action 'self'","frame-ancestors 'none'","base-uri 'none'","object-src 'none'","upgrade-insecure-requests"].join('; ');
+ return new Response(content,{headers:{...BASE_HEADERS,'Content-Type':'text/html; charset=utf-8','Content-Security-Policy':csp,'Strict-Transport-Security':'max-age=31536000'}})
+}
+
 const text=s=>({title:[{text:{content:s}}]});
 const prop=(p,k)=>p?.[k]||{};
 const plain=(p,k)=>(prop(p,k).rich_text||[]).map(t=>t.plain_text).join('');
@@ -71,23 +93,24 @@ async function equal(a,b){
  const enc=new TextEncoder(),[x,y]=await Promise.all([crypto.subtle.digest('SHA-256',enc.encode(a)),crypto.subtle.digest('SHA-256',enc.encode(b))]);
  const l=new Uint8Array(x),r=new Uint8Array(y);let d=0;for(let i=0;i<l.length;i++)d|=l[i]^r[i];return d===0;
 }
-export default {async fetch(req,env){
+export default {async fetch(req,env,ctx){
+ // Fail closed even if a public route is accidentally reopened before Access is configured.
+ if(!ctx?.access||typeof ctx.access.getIdentity!=='function')return js({error:'私人網站尚未完成 Access 驗證'},403);
+ let identity;try{identity=await ctx.access.getIdentity()}catch{return js({error:'Access 身分驗證失敗'},403)}
+ if(!identity?.email)return js({error:'Access 身分資訊缺失'},403);
  const path=new URL(req.url).pathname;
- if(!path.startsWith('/api/')){
-  if(typeof STATIC_HTML!=='undefined')return new Response(STATIC_HTML,{headers:{'Content-Type':'text/html; charset=utf-8','Cache-Control':'no-cache','X-Content-Type-Options':'nosniff'}});
-  return env.ASSETS.fetch(req);
- }
+ if(!path.startsWith('/api/'))return req.method==='GET'&&(path==='/'||path==='/index.html')?htmlResponse():js({error:'找不到頁面'},404);
  if(!env.NOTION_TOKEN||!env.APP_PASSWORD)return js({error:'伺服器尚未設定 Secrets'},503);
  if(!await equal((req.headers.get('Authorization')||'').replace(/^Bearer\s+/i,''),env.APP_PASSWORD))return js({error:'密碼不正確'},401);
  if(req.method!=='GET'&&req.headers.get('Origin')&&req.headers.get('Origin')!==new URL(req.url).origin)return js({error:'不允許跨站寫入'},403);
+ const site=req.headers.get('Sec-Fetch-Site');if(req.method!=='GET'&&site&&!['same-origin','none'].includes(site))return js({error:'跨站請求已拒絕'},403);
  try{
   if(path==='/api/state'&&req.method==='GET')return js(await getState(env));
   if(req.method==='POST'&&['/api/check','/api/anchor','/api/record'].includes(path)){
-   if(Number(req.headers.get('Content-Length')||0)>10000)return js({error:'資料太大'},413);
-   const b=await req.json();
+   const b=await jsonBody(req);
    return js(await ({'/api/check':setCheck,'/api/anchor':setAnchor,'/api/record':setRecord}[path])(env,b));
   }
   if(req.method==='DELETE'&&path.startsWith('/api/record/'))return js(await delRecord(env,decodeURIComponent(path.slice('/api/record/'.length))));
   return js({error:'未知端點'},404);
- }catch(e){const message=String(e.message||e).slice(0,320);return js({error:message},e.notionStatus?502:400);}
+ }catch(e){if(e.notionStatus)return js({error:'Notion API 回應 '+e.notionStatus+'，請確認授權及資料格式'},502);const message=String(e.message||e).slice(0,160);return js({error:message},e.httpStatus||400);}
 }};
